@@ -1,0 +1,9 @@
+{
+  "sweep": "phase2_fixed",
+  "grid": {"arm": ["sp", "mup", "umup"], "width": [32, 64, 128, 256, 512, 1024, 2048],
+           "precision": ["fixed8", "fixed4"], "scale_mode": ["latent", "auto"], "seed": [0, 1]},
+  "eta0": {"sp":   {"center": 0.0078125, "k_min": -10, "k_max": 10, "step": 0.5},
+           "mup":  {"center": 0.0078125, "k_min": -10, "k_max": 10, "step": 0.5},
+           "umup": {"center": 0.125,     "k_min": -10, "k_max": 10, "step": 0.5}},
+  "fixed": {"epochs": 15}
+}

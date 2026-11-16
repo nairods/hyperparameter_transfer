@@ -1,0 +1,10 @@
+{
+  "sweep": "phase0_pilot",
+  "grid": {"arm": ["sp", "sp_sqrtD", "mup", "umup"], "width": [64, 1024], "precision": ["fp32"],
+           "scale_mode": ["latent"], "seed": [0]},
+  "eta0": {"sp":       {"center": 0.0078125, "k_min": -8, "k_max": 8, "step": 1},
+           "sp_sqrtD": {"center": 0.0078125, "k_min": -8, "k_max": 8, "step": 1},
+           "mup":      {"center": 0.0078125, "k_min": -8, "k_max": 8, "step": 1},
+           "umup":     {"center": 0.5,       "k_min": -8, "k_max": 8, "step": 1}},
+  "fixed": {"epochs": 15}
+}

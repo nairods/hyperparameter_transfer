@@ -1,0 +1,9 @@
+# Conda environment used for all results (CPU). Create with: conda env create -f environment.yml
+name: hpt
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - -r requirements.txt

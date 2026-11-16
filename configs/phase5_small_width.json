@@ -1,0 +1,17 @@
+{
+  "sweep": "phase5_small_width",
+  "grid": {"arm": ["sp", "sp_sqrtD", "mup", "umup"], "width": [4, 8, 16],
+           "precision": ["fp32"], "scale_mode": ["latent"], "seed": [0, 1, 2, 3, 4]},
+  "eta0": {"sp":       {"center": 0.0078125, "k_min": -12, "k_max": 12, "step": 0.5},
+           "sp_sqrtD": {"center": 0.0078125, "k_min": -12, "k_max": 12, "step": 0.5},
+           "mup":      {"center": 0.0078125, "k_min": -12, "k_max": 12, "step": 0.5},
+           "umup":     {"center": 0.25,      "k_min": -12, "k_max": 12, "step": 0.5}},
+  "fixed": {"epochs": 15},
+  "extra_grids": [
+    {"grid": {"arm": ["sp", "mup", "umup"], "width": [4, 8, 16], "precision": ["fixed8", "fixed4"],
+              "scale_mode": ["latent", "auto"], "seed": [0, 1, 2]},
+     "eta0": {"sp":   {"center": 0.0078125, "k_min": -12, "k_max": 12, "step": 0.5},
+              "mup":  {"center": 0.0078125, "k_min": -12, "k_max": 12, "step": 0.5},
+              "umup": {"center": 0.125,     "k_min": -12, "k_max": 12, "step": 0.5}}}
+  ]
+}

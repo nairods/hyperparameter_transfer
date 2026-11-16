@@ -1,0 +1,22 @@
+# data, packed env, calibration models (regenerate, see README)
+data/
+env/
+calib/
+*.tar.gz
+*.npz
+# raw per-run results (one JSON per run, ~120 MB); per-sweep summary CSVs results/*.csv are kept
+results/*/
+results/*.log
+# generated condor job lists
+sweeps/chunks/
+sweeps/*.args
+# site-specific settings
+condor/site.env
+# python / editor
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.pytest_cache/
+.vscode/
+*.tmp*
+*.log

@@ -1,0 +1,13 @@
+# Submitted by condor/submit.sh, which copies run.sh + the args file to AFS (standard schedds refuse /eos paths).
+universe       = vanilla
+executable     = $(LOGDIR)/run.sh
+transfer_input_files = $(LOGDIR)/site.env
+arguments      = $(args)
+output         = $(LOGDIR)/$(ClusterId).$(ProcId).out
+error          = $(LOGDIR)/$(ClusterId).$(ProcId).err
+log            = $(LOGDIR)/$(ClusterId).log
+request_cpus   = 4
+request_memory = 6 GB
++JobFlavour    = "$(flavour)"
+max_retries    = 2
+queue flavour,args from $(LOGDIR)/jobs.args
