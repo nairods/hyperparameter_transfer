@@ -143,7 +143,7 @@ Per-sweep summary tables are in `results/<sweep>.csv` (one row per run); the raw
 | `phase2_fixed` | fixed8/4 × latent/auto, SP/μP/u-μP, D = 32…2048, 21 LRs, 2 seeds | 3528 |
 | `phase3_precision` | fixed6/2, ternary, binary × latent/auto, D ∈ {64, 512}, 2 seeds | 2016 |
 | `phase5_small_width` | D ∈ {4, 8, 16}, FP32 (5 seeds) and fixed8/4 (3 seeds), 25 LRs | 4200 |
-| `transfer_eval` | η* tuned at D=32 vs own η*, D = 4…2048, test acc/AUC, half-epoch checkpoints | ~800 |
+| `transfer_eval` | η* tuned at D=32 vs own η*, D = 4…2048, test acc/AUC, half-epoch checkpoints | 912 |
 
 ---
 
@@ -161,7 +161,11 @@ These record per-layer RMS quantities during the first 10 Adam steps against wid
 - **SP-√D:** halves the slopes but over-corrects the input layer.
 - **μP and u-μP:** flat.
 - **4-bit frozen grid (`*_fixed4_latent.png`):** u-μP hidden-layer updates fall off at large D. Its weight step shrinks as η0/√D while the grid step is fixed, so fewer weights change level.
-- **Other plots in the folder:** gradient RMS (`grad_rms_*`), effective update RMS (`upd_rms_*`) and backward signal ∂L/∂z (`bwd_signal_*`) for FP32, fixed8 and fixed4.
+- **Backward pass:**
+  - The effective weight update (`upd_rms_*`) is flat in D for SP, but ∝ 1/D for μP and u-μP hidden layers, as their LR rules intend. This also holds at 4 bits.
+  - Gradients and the backward signal ∂L/∂z (`grad_rms_*`, `bwd_signal_*`) shrink with width under μP and u-μP. Adam normalises this away, and the gradients stay far above Adam's ε even at D=2048.
+- **Finite-width signs at D ≤ 16:** μP's curves bend away from flat, and u-μP at D=8 with η0=1 kills the network (gradients exactly 0 by step 5).
+- **Files:** each quantity is plotted for `fp32`, `fixed8_latent`, `fixed4_latent` and `fixed4_auto`, at D = 4…2048.
 
 ### Q2 in FP32: width transfer (Phase 1)
 ![](plots/phase1_fp32/curves_final_val_loss_all.png)
@@ -207,14 +211,73 @@ The plot shows η0*(precision) / η0*(FP32) at D = 64 (solid) and 512 (dashed).
 - **fixed2 (W2A2)** transfers for no parametrisation.
 
 ### Performance vs width with the LR tuned at D=32 (`transfer_eval`)
-*Running; plots will be in `plots/transfer_eval/`:*
-- `perf_test_acc.png`, `perf_test_auc.png`: test accuracy and macro AUC vs width, using the η0* tuned at D=32 (solid) vs each width's own η0* (dashed), with literature baselines.
-- `time_to_acc_0.76.png`, `time_to_acc_0.769.png`, `time_to_auc_0.94.png`: epochs until the validation metric first reaches the baseline, vs width.
+The η0* fitted at D=32 is used unchanged at every width D = 4…2048 (solid lines). Each width's own η0* is the reference (dashed). Each run trains for 15 epochs with 3 seeds and is evaluated on the **test set**; dotted lines mark literature baselines.
 
-### Finite-width effects (`phase5_small_width`)
-*Running; plots will be in `plots/finite_width/`:*
-- `eta_ratio_vs_width.png`: deviation of η0*(D) from its large-width value for D = 4…2048, with the breakdown width D_c.
-- `transfer_heatmap_*.png`: penalty for tuning at width s and training at width t.
+![](plots/transfer_eval/perf_test_acc.png)
+![](plots/transfer_eval/perf_test_auc.png)
+
+Test accuracy at D=2048 (transferred η*₃₂ / own η*):
+
+| | SP | μP | u-μP |
+|---|---|---|---|
+| FP32 | 77.22 / 77.32 | **77.37 / 77.38** | 77.30 / 77.30 |
+| fixed8, frozen grid | 76.70 / 77.29 | **77.37 / 77.37** | 77.06 / 77.12 |
+| fixed8, auto | 76.93 / 77.30 | **77.35 / 77.37** | 77.23 / 77.25 |
+| fixed4, frozen grid | 76.20 / 77.05 | **77.21 / 77.26** | 76.93 / 77.08 |
+| fixed4, auto | 76.95 / 77.14 | **77.20 / 77.25** | 77.03 / 77.15 |
+
+(SP-√D in FP32: 77.31 / 77.32. Macro AUC behaves the same way: μP 0.945–0.946 at every precision, SP with the transferred LR down to 0.9415 at fixed4.)
+
+- **μP:** tuning at D=32 is as good as tuning at every width (difference ≤ 0.05%), and accuracy keeps rising with width at every precision.
+- **SP:** with the transferred LR, accuracy *drops* at large width under quantisation, by 0.85% at fixed4 with the frozen grid. That is the cost of not re-tuning.
+- **u-μP** loses 0.05–0.15%.
+- **All parametrisations:** below D ≈ 16, accuracy falls steeply; models with D ≤ 8 are capacity-limited.
+
+**Time to reach the literature baselines** (epochs until the validation metric first crosses the threshold, LR transferred from D=32, median over 3 seeds):
+
+![](plots/transfer_eval/time_to_acc_0.769.png)
+
+| epochs to 76.9% val acc, D=2048 | SP | μP | u-μP |
+|---|---|---|---|
+| FP32 | 8.0 | **4.5** | 6.0 |
+| fixed8, frozen grid | not reached | **4.5** | 8.0 |
+| fixed8, auto | 12.5 | **5.0** | 6.0 |
+| fixed4, frozen grid | not reached | **7.0** | 10.5 |
+| fixed4, auto | 11.5 | **5.5** | 7.5 |
+
+- **76.0% val acc** (`time_to_acc_0.76.png`): every parametrisation reaches it within about 1.5–3 epochs for D ≥ 128. At D ≤ 16 it is reached late or not at all in 4-bit.
+- **Wide μP networks reach the stretch baseline fastest.** In FP32 that's 4.5 epochs at D=2048 vs 6 epochs at D=256 and 11.5 epochs at D=32.
+- **Wide SP networks get *slower* under quantisation** with the transferred LR.
+- **AUC 0.940** is shown in `time_to_auc_0.94.png`.
+- **The checkpoints are half-epoch.** Times are measured inside the fixed 15-epoch cosine schedule.
+
+### Finite-width effects: where does transfer break down? (`phase5_small_width`)
+LR grids at D = 4, 8, 16 (FP32 with 5 seeds, fixed8/4 with 3 seeds) extend the sweeps down to tiny networks. η0*(∞) is the geometric mean of η0* at D ≥ 512.
+
+![](plots/finite_width/eta_ratio_vs_width.png)
+
+The y-axis is log₂(η0*(D) / η0*(∞)) in octaves; the grey band is ±0.5 octave (measurement noise).
+
+Two widths are defined per parametrisation and precision. Each is the smallest width from which every larger width passes:
+- **D_c (practical breakdown width):** below D_c, using the large-width η0*(∞) costs more than max(0.002, 2 × seed standard error) in val loss.
+- **D_η:** below D_η, η0* deviates from η0*(∞) by more than 0.5 octave + 2σ.
+
+| D_c (D_η) | SP | SP-√D | μP | u-μP |
+|---|---|---|---|---|
+| FP32 | 128 (256) | 4 (8) | **4 (4)** | 32 (4) |
+| fixed8, frozen grid | 512 (512) | – | **4 (4)** | 32 (32) |
+| fixed8, auto | 512 (512) | – | **4 (4)** | 256 (16) |
+| fixed4, frozen grid | 1024 (–) | – | **128 (4)** | 64 (64) |
+| fixed4, auto | 512 (512) | – | **128 (128)** | 128 (128) |
+
+- **μP transfers down to D = 4 in FP32 and at 8 bits.** Here "transfers" means the large-width η0* costs < 0.002 loss.
+- **There is a finite-width effect even in FP32, but it shows up as stability rather than as a moved optimum.** At D ≤ 8 the divergence edge moves to within about one octave of η0* (`plots/finite_width/curves_fp32.png`). Using η0*₃₂ at D=4 therefore costs 0.058 in loss, while η0* itself moves by less than 0.5 octave.
+- **At 4 bits the breakdown width rises to D ≈ 128 for μP and u-μP.** Below that, the optimal LR moves by up to 1–3 octaves (downwards for u-μP). Finite-width and finite-precision corrections compound: a 4-bit proxy model must be wider than an FP32 proxy.
+- **SP never transfers:** its η0* drifts continuously, so the breakdown width is essentially the largest width.
+
+![](plots/finite_width/transfer_heatmap_fixed4_latent.png)
+
+The heatmaps (`transfer_heatmap_*.png`) show the val-loss penalty (×10⁻³) for tuning at width s and training at width t. They answer "how small can the tuning proxy be?". For 4-bit μP, any proxy with s ≥ 16 transfers to targets t ≥ 128 within 0.002. Tuning u-μP on a small proxy costs 0.003–0.015 at large widths.
 
 ---
 

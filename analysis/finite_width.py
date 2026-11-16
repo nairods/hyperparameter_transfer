@@ -11,8 +11,9 @@ Merges the LR sweeps at D=32..2048 (phase1_fp32 / phase2_fixed) with the small-w
   curves_<setting>.png      val loss vs eta0 for all widths 4..2048
   breakdown.csv             D_c per arm and setting, fitted finite-width correction exponent p
 
-D_c = smallest width such that every width >= D_c has |log2(eta*/eta*_inf)| <= 0.5 AND a loss penalty
-for using eta*_inf below max(2 x seed standard error, 0.001).
+Two widths per (arm, setting), each "the smallest D such that every width >= D passes":
+  D_c   (transfer breakdown): using eta*_inf costs <= max(PEN_TOL, 2 x seed standard error) in val loss
+  D_eta (optimum deviation):  |log2(eta*(D)/eta*_inf)| <= 0.5 octave + 2 x bootstrap std of log2 eta*
 
 python -m analysis.finite_width
 """
@@ -27,7 +28,8 @@ from .analyze import PROJECT_DIR, collect, optimum_table, plot_curves
 SETTINGS = [("fp32", "latent"), ("fixed8", "latent"), ("fixed8", "auto"), ("fixed4", "latent"),
             ("fixed4", "auto")]
 LARGE = (512, 1024, 2048)
-BAND = 0.5   # octaves
+BAND = 0.5      # octaves
+PEN_TOL = 0.002  # val-loss tolerance (~ gain from doubling the width at D=1024)
 
 
 def load():
@@ -59,7 +61,7 @@ def analyse_setting(df, opt):
             best = m.loc[m["mean"].idxmin()]
             se = best["std"] / math.sqrt(max(1, best["count"])) if best["count"] > 1 else 0.0
             at_inf = m[m.eta0 == nearest(m.eta0, eta_inf)]["mean"].iloc[0] if np.isfinite(eta_inf) else np.nan
-            pen[w] = (at_inf - best["mean"], max(2 * se, 0.001))
+            pen[w] = (at_inf - best["mean"], max(2 * se, PEN_TOL))
         # source -> target heatmap
         H = pd.DataFrame(index=widths, columns=widths, dtype=float)
         for s in widths:
@@ -72,22 +74,27 @@ def analyse_setting(df, opt):
                 e = nearest(m.eta0, o.loc[s, "eta_star"])
                 H.loc[s, t] = m[m.eta0 == e]["mean"].iloc[0] - m["mean"].min()
         heat[arm] = H
-        ok = {}
+        ok_pen, ok_eta = {}, {}
         for w in widths:
             r = math.log2(o.loc[w, "eta_star"] / eta_inf) if (w in o.index and np.isfinite(eta_inf)) else np.nan
+            sd = o.loc[w, "log2_eta_star_std"] if w in o.index else np.nan
+            sd = 0.0 if not np.isfinite(sd) else sd
             p_, tol = pen.get(w, (np.nan, np.nan))
-            ok[w] = bool(np.isfinite(r) and abs(r) <= BAND and np.isfinite(p_) and p_ <= tol)
+            ok_pen[w] = bool(np.isfinite(p_) and p_ <= tol)
+            ok_eta[w] = bool(np.isfinite(r) and abs(r) <= BAND + 2 * sd)
             rows.append({"arm": arm, "width": w, "eta_star": o.loc[w, "eta_star"] if w in o.index else np.nan,
-                         "log2_ratio": r, "log2_std": o.loc[w, "log2_eta_star_std"] if w in o.index else np.nan,
-                         "penalty_at_eta_inf": p_, "tolerance": tol, "eta_inf": eta_inf, "ok": ok[w]})
-        dc = None
-        for w in widths:
-            if all(ok[v] for v in widths if v >= w):
-                dc = w
-                break
+                         "log2_ratio": r, "log2_std": sd, "penalty_at_eta_inf": p_, "tolerance": tol,
+                         "eta_inf": eta_inf, "ok_penalty": ok_pen[w], "ok_eta": ok_eta[w]})
+
+        def smallest_ok(ok):
+            for w in widths:
+                if all(ok[v] for v in widths if v >= w):
+                    return w
+            return None
+        dc, de = smallest_ok(ok_pen), smallest_ok(ok_eta)
         for r in rows:
             if r["arm"] == arm:
-                r["D_c"] = dc
+                r["D_c"], r["D_eta"] = dc, de
     return pd.DataFrame(rows), heat
 
 
@@ -125,6 +132,7 @@ def plot_ratio(all_tabs, out):
             c = style.CATEGORICAL[style.ARM_ORDER.index(arm)]
             off = 1 + 0.04 * (i - 1.5)
             dc = t["D_c"].iloc[0]
+            dc = int(dc) if pd.notna(dc) else None
             ax.errorbar(t.width * off, t.log2_ratio, yerr=t.log2_std.fillna(0), marker="o", ms=4, capsize=2,
                         color=c, label=f"{style.ARM_LABEL[arm]}  ($D_c$={dc if dc else '>2048'})")
             if dc:
@@ -135,7 +143,8 @@ def plot_ratio(all_tabs, out):
         ax.legend(fontsize=6.5, loc="best")
     axes[0, 0].set_ylabel(r"$\log_2(\eta_0^*(D) / \eta_0^*(\infty))$  [octaves]")
     fig.suptitle(r"Finite-width deviation of the optimal LR; $\eta^*(\infty)$ = geo. mean of $\eta^*$ at "
-                 r"D$\geq$512; band = $\pm$0.5 octave (noise); dotted = breakdown width $D_c$", fontsize=9)
+                 r"D$\geq$512; band = $\pm$0.5 octave (noise); dotted = $D_c$ (below it, using "
+                 r"$\eta^*(\infty)$ costs > 0.002 val loss)", fontsize=9)
     fig.tight_layout()
     fig.savefig(out)
     plt.close(fig)
@@ -163,8 +172,9 @@ def plot_heat(heat, setting, out, vmax=0.02):
                             color="#fcfcfb" if v > 0.6 * vmax else "#0b0b0b")
         ax.set_xticks(range(H.shape[1]), [str(w) for w in H.columns], fontsize=7, rotation=45)
         ax.set_yticks(range(H.shape[0]), [str(w) for w in H.index], fontsize=7)
-        ax.set_xlabel("target width t")
-        ax.set_ylabel(r"source width s (where $\eta^*$ is tuned)")
+        ax.set_xlabel("target width t (trained)")
+        if ax is axes[0, 0]:
+            ax.set_ylabel(r"source width s (where $\eta^*$ is tuned)")
         ax.set_title(style.ARM_LABEL[arm])
         ax.grid(False)
     cb = fig.colorbar(im, ax=axes[0].tolist(), shrink=0.8)
@@ -196,6 +206,7 @@ def main():
         for arm, t in tab.groupby("arm"):
             a, p = fit_power(t)
             summary.append({"precision": prec, "scale_mode": mode, "arm": arm, "D_c": t["D_c"].iloc[0],
+                            "D_eta": t["D_eta"].iloc[0],
                             "eta_inf": t["eta_inf"].iloc[0], "fit_a": a, "fit_p": p,
                             "log2_ratio_D4": t[t.width == 4]["log2_ratio"].mean(),
                             "log2_ratio_D32": t[t.width == 32]["log2_ratio"].mean()})

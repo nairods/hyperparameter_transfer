@@ -65,6 +65,21 @@ def time_to(row, metric, thr):
     return np.inf
 
 
+def _legend(axes, extra=()):
+    """One legend (right of the last panel) with the arms of all panels plus optional line-style keys."""
+    from matplotlib.lines import Line2D
+    seen = {}
+    for ax in axes[0]:
+        for h, lab in zip(*ax.get_legend_handles_labels()):
+            if lab and not lab.startswith("_"):
+                seen.setdefault(lab, h)
+    handles, labels = list(seen.values()), list(seen.keys())
+    for ls, lab in extra:
+        handles.append(Line2D([], [], color="#52514e", ls=ls))
+        labels.append(lab)
+    axes[0, -1].legend(handles, labels, fontsize=7, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+
+
 def plot_perf(df, metric, out, source_tag):
     import matplotlib
     matplotlib.use("Agg")
@@ -85,15 +100,10 @@ def plot_perf(df, metric, out, source_tag):
                 if g.empty:
                     continue
                 s = g.groupby("width")[col].agg(["mean", "std", "count"])
-                n_div = g.groupby("width")[col].apply(lambda v: v.isna().sum())
                 c = style.CATEGORICAL[style.ARM_ORDER.index(arm)]
                 ax.errorbar(s.index, s["mean"], yerr=s["std"].fillna(0), ls=ls, marker="o" if ls == "-" else None,
                             ms=4, capsize=2, color=c, alpha=1 if ls == "-" else 0.7,
                             label=f"{style.ARM_LABEL[arm]}" if ls == "-" else None)
-                for w, nd in n_div.items():
-                    if nd and ls == "-":
-                        ax.annotate(f"{nd}×div", (w, ax.get_ylim()[0]), fontsize=6, color=c,
-                                    xytext=(0, 3), textcoords="offset points", ha="center")
         for y, lab in BASELINES[metric]:
             ax.axhline(y, color="#52514e", lw=0.8, ls=":")
             ax.annotate(lab, (ax.get_xlim()[0], y), fontsize=6, color="#52514e", xytext=(2, 2),
@@ -101,12 +111,10 @@ def plot_perf(df, metric, out, source_tag):
         ax.set_xscale("log", base=2)
         ax.set_title(setting_label(prec, mode))
         ax.set_xlabel("width D")
-    lo = np.nanpercentile(df[col], 5)
+    lo = np.nanpercentile(df[col], 3)
     axes[0, 0].set_ylim(min(lo, min(y for y, _ in BASELINES[metric])) - 0.004, np.nanmax(df[col]) + 0.002)
     axes[0, 0].set_ylabel(f"test {metric.upper() if metric == 'auc' else 'accuracy'}")
-    axes[0, -1].plot([], [], color="#52514e", ls="-", label=r"$\eta^*$ from D=32 (transferred)")
-    axes[0, -1].plot([], [], color="#52514e", ls="--", label=r"each width's own $\eta^*$")
-    axes[0, -1].legend(fontsize=7, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    _legend(axes, extra=[("-", r"$\eta^*$ from D=32 (transferred)"), ("--", r"each width's own $\eta^*$")])
     fig.suptitle(f"Test {metric} after 15 epochs vs width (mean ± std over seeds)", fontsize=10)
     fig.tight_layout()
     fig.savefig(out)
@@ -149,15 +157,15 @@ def plot_time(df, metric, thr, out, source_tag, max_epoch=15):
             if len(nr):
                 ax.scatter(nr.index * off, [top] * len(nr), marker="o", facecolors="none", edgecolors=c, s=30)
         ax.axhline(max_epoch, color="#52514e", lw=0.6, ls=":")
-        ax.annotate("not reached ↑", (2, top), fontsize=6, color="#52514e", xytext=(0, -9),
-                    textcoords="offset points")
+        ax.annotate("open circles: not reached in 15 epochs", (0.98, 0.03), xycoords="axes fraction", ha="right",
+                    fontsize=6, color="#52514e", va="bottom")
         ax.set_xscale("log", base=2)
         ax.set_ylim(0, top + 0.6)
         ax.set_title(setting_label(prec, mode))
         ax.set_xlabel("width D")
     name = f"val accuracy ≥ {thr:.1%}" if metric == "acc" else f"val AUC ≥ {thr:.3f}"
     axes[0, 0].set_ylabel(f"epochs until {name}")
-    axes[0, -1].legend(fontsize=7, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    _legend(axes)
     fig.suptitle(f"Time to threshold ({name}) with the LR transferred from D=32 "
                  f"(median, min–max over seeds; 15-epoch cosine schedule)", fontsize=10)
     fig.tight_layout()
