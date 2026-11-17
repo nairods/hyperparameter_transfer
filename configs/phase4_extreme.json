@@ -1,0 +1,16 @@
+{
+  "sweep": "phase4_extreme",
+  "grid": {"arm": ["sp", "mup", "umup"], "width": [32, 128, 256, 1024, 2048],
+           "precision": ["ternary", "binary"], "scale_mode": ["latent", "auto"], "seed": [0, 1]},
+  "eta0": {"sp":   {"center": 0.0078125, "k_min": -10, "k_max": 10, "step": 0.5},
+           "mup":  {"center": 0.0078125, "k_min": -10, "k_max": 10, "step": 0.5},
+           "umup": {"center": 0.125,     "k_min": -10, "k_max": 10, "step": 0.5}},
+  "fixed": {"epochs": 15},
+  "extra_grids": [
+    {"grid": {"arm": ["sp", "mup", "umup"], "width": [4, 8, 16], "precision": ["ternary", "binary"],
+              "scale_mode": ["latent", "auto"], "seed": [0, 1, 2]},
+     "eta0": {"sp":   {"center": 0.0078125, "k_min": -12, "k_max": 12, "step": 0.5},
+              "mup":  {"center": 0.0078125, "k_min": -12, "k_max": 12, "step": 0.5},
+              "umup": {"center": 0.125,     "k_min": -12, "k_max": 12, "step": 0.5}}}
+  ]
+}

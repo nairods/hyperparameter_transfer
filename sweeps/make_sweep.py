@@ -23,13 +23,18 @@ FLAVOUR = os.environ.get("HPT_FLAVOUR")  # force a JobFlavour, e.g. for resubmis
 CHUNK_BUDGET_S = float(os.environ.get("HPT_CHUNK_H", "5")) * 3600   # estimated CPU seconds per condor job (runs are packed into chunks)
 
 
-def est_cost(width, epochs, precision="fp32"):
+def est_cost(width, epochs, precision="fp32", arch="mlp", depth=3):
     """Estimated wall seconds of one run on a 4-core lxbatch slot, including ~20 s python/TF start-up.
-    Calibrated on phase1/phase2 (fp32 D=2048 ~3400 s; quantised D=1024 ~1050 s, D=64 ~65 s)."""
-    if precision == "fp32":
-        c = 30 + 0.0008 * width ** 2
-    else:
+    Calibrated on phase1/phase2 (fp32 D=2048 ~3400 s; quantised D=1024 ~1050 s, D=64 ~65 s) and on
+    resmlp timings at D=128 (L=32: fp32 ~0.15 s/step, fixed4 ~0.4 s/step, overhead dominated)."""
+    q = precision != "fp32"
+    if arch == "resmlp":
+        c = (250 + 105 * depth) if q else (170 + 35 * depth)
+        c += 0.0004 * width ** 2 * depth * (1.35 if q else 1.0)
+    elif q:
         c = 60 + 0.0009 * width ** 2
+    else:
+        c = 30 + 0.0008 * width ** 2
     return 20 + c * epochs / 15
 
 
@@ -86,7 +91,7 @@ def write_jobs(sweep, runs, out_dir=None):
         n_total += 1
         if rid + ".json" in done:
             continue
-        todo.append((est_cost(a.width, a.epochs, a.precision), " ".join(cli)))
+        todo.append((est_cost(a.width, a.epochs, a.precision, a.arch, a.depth), " ".join(cli)))
     # pack runs into chunks of ~CHUNK_BUDGET_S (first-fit decreasing), one condor job per chunk
     todo.sort(key=lambda t: -t[0])
     chunks = []

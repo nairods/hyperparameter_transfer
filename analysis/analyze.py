@@ -81,13 +81,16 @@ def optimum_table(df, group_cols, metric="final_val_loss", n_boot=200, seed=0):
     for key, g in df.groupby(group_cols):
         piv = g.pivot_table(index="eta0", columns="seed", values=metric, aggfunc="mean").sort_index()
         etas = piv.index.values
-        mean = piv.mean(axis=1, skipna=False).values
+        # points near the optimum may have more seeds than the rest of the grid: average what exists
+        mean = piv.mean(axis=1, skipna=True).values
         eta_star, l_star = fit_optimum(etas, mean)
         boots = []
         if piv.shape[1] > 1:
             for _ in range(n_boot):
                 cols = rng.integers(0, piv.shape[1], piv.shape[1])
-                boots.append(math.log2(fit_optimum(etas, piv.values[:, cols].mean(axis=1))[0]))
+                with np.errstate(all="ignore"):
+                    bm = np.nanmean(piv.values[:, cols], axis=1)
+                boots.append(math.log2(fit_optimum(etas, bm)[0]))
         rows.append({**dict(zip(group_cols, key if isinstance(key, tuple) else (key,))),
                      "eta_star": eta_star, "loss_star": l_star,
                      "log2_eta_star_std": float(np.nanstd(boots)) if boots else np.nan,

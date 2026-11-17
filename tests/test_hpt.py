@@ -106,3 +106,28 @@ def test_run_id_backward_compatible():
     old = {k: v for k, v in cfg.items() if k not in ("range_mode", "tag")}
     assert run_id(cfg) == run_id(old)
     assert run_id({**cfg, "tag": "own"}) != run_id(cfg)
+
+
+def test_resmlp_depth_scaling():
+    """depth-muP: block multiplier and block LR x sqrt(L_base/L); identity at L = L_base."""
+    from hpt.model import build_resmlp
+    x = tf.random.normal((64, 16))
+    m2, info2 = build_resmlp("mup", 32, depth=2, depth_scaling="sqrt", depth_base=2)
+    m2n, info2n = build_resmlp("mup", 32, depth=2, depth_scaling="none", depth_base=2)
+    assert m2.branch_mult == m2n.branch_mult == 1.0
+    m8, info8 = build_resmlp("mup", 32, depth=8, depth_scaling="sqrt", depth_base=2)
+    assert m8.branch_mult == pytest.approx(0.5)
+    blk = [i for i in info8 if i["role"] == "hidden"]
+    assert len(blk) == 8 and blk[0]["lr_mult"] == pytest.approx(0.5 * 64 / 32)
+    out, pre = m8(x, return_hidden=True)
+    assert out.shape == (64, 5) and len(pre) == 10
+
+
+def test_new_keys_keep_run_ids():
+    from hpt.train import CONFIG_KEYS, parse_args, run_id
+    a = parse_args(["--arm", "sp", "--width", "128", "--eta0", "0.004", "--precision", "fixed4"])
+    cfg = {k: getattr(a, k) for k in CONFIG_KEYS}
+    legacy = {k: v for k, v in cfg.items()
+              if k not in ("range_mode", "tag", "arch", "depth_scaling", "depth_base")}
+    assert run_id(cfg) == run_id(legacy)
+    assert run_id({**cfg, "arch": "resmlp"}) != run_id(cfg)

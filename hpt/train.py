@@ -21,7 +21,12 @@ def parse_args(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--arm", required=True)
     p.add_argument("--width", type=int, required=True)
-    p.add_argument("--depth", type=int, default=3, help="number of hidden layers")
+    p.add_argument("--depth", type=int, default=3,
+                   help="mlp: number of hidden layers; resmlp: number of residual blocks")
+    p.add_argument("--arch", default="mlp", choices=["mlp", "resmlp"])
+    p.add_argument("--depth-scaling", default="none", choices=["none", "sqrt"],
+                   help="resmlp: depth-muP block multiplier and LR x sqrt(depth_base/depth)")
+    p.add_argument("--depth-base", type=int, default=2)
     p.add_argument("--precision", default="fp32")
     p.add_argument("--scale-mode", default="latent")
     p.add_argument("--eta0", type=float, required=True)
@@ -55,17 +60,23 @@ def parse_args(argv=None):
 
 CONFIG_KEYS = ("arm", "width", "depth", "precision", "scale_mode", "eta0", "seed", "epochs",
                "max_steps", "batch_size", "warmup_frac", "final_lr_frac", "d_base", "adam_eps",
-               "umup_input_lr", "readout_zero_init", "range_mode", "tag")
+               "umup_input_lr", "readout_zero_init", "range_mode", "tag", "arch", "depth_scaling",
+               "depth_base")
+# keys left out of the run-id hash when they have their default value, so that run ids made before
+# the key existed stay valid
+HASH_OMIT_DEFAULTS = {"range_mode": "init", "tag": "", "arch": "mlp", "depth_scaling": "none",
+                      "depth_base": 2}
 
 
 def run_id(cfg):
     base = (f"{cfg['arm']}_D{cfg['width']}_L{cfg['depth']}_{cfg['precision']}_{cfg['scale_mode']}"
             f"_lr{cfg['eta0']:.4g}_s{cfg['seed']}")
     hcfg = dict(cfg)
-    if hcfg.get("range_mode", "init") == "init":   # keeps ids of runs made before range_mode existed
-        hcfg.pop("range_mode", None)
-    if not hcfg.get("tag"):                         # same for tag
-        hcfg.pop("tag", None)
+    for k, default in HASH_OMIT_DEFAULTS.items():
+        if hcfg.get(k, default) in (default, None):
+            hcfg.pop(k, None)
+    if cfg.get("arch", "mlp") == "resmlp":
+        base = base.replace(f"_L{cfg['depth']}_", f"_R{cfg['depth']}{cfg['depth_scaling']}_")
     h = hashlib.sha1(json.dumps(hcfg, sort_keys=True).encode()).hexdigest()[:8]
     return f"{base}_{h}"
 
@@ -121,9 +132,17 @@ def main(argv=None):
         calib = [{"kernel": c[f"kernel_{i}"], "bias": c[f"bias_{i}"],
                   "acts": c[f"acts_{i}"] if f"acts_{i}" in c.files else None}
                  for i in range(args.depth + 1)]
-    model, layer_info = build_mlp(args.arm, args.width, args.depth, args.precision, args.scale_mode,
-                                  args.d_base, args.seed, umup_input_lr=args.umup_input_lr,
-                                  readout_zero_init=args.readout_zero_init, calib=calib)
+    if args.arch == "resmlp":
+        from .model import build_resmlp
+        model, layer_info = build_resmlp(args.arm, args.width, args.depth, args.precision,
+                                         args.scale_mode, args.d_base, args.seed,
+                                         umup_input_lr=args.umup_input_lr,
+                                         depth_scaling=args.depth_scaling, depth_base=args.depth_base)
+    else:
+        model, layer_info = build_mlp(args.arm, args.width, args.depth, args.precision,
+                                      args.scale_mode, args.d_base, args.seed,
+                                      umup_input_lr=args.umup_input_lr,
+                                      readout_zero_init=args.readout_zero_init, calib=calib)
 
     steps_per_epoch = len(Xtr) // args.batch_size
     total_steps = args.max_steps or steps_per_epoch * args.epochs
@@ -274,6 +293,16 @@ def main(argv=None):
         "env": {"host": socket.gethostname(), "python": platform.python_version(),
                 "tf": tf.__version__, "threads": args.threads, "argv": sys.argv},
     }
+    if not diverged:   # end-of-training scale statistics (does the network stay at unit scale?)
+        _, pre = model(tf.constant(Xva[:8192]), return_hidden=True)
+        result["final_stats"] = [{
+            "pre_rms": float(tf.sqrt(tf.reduce_mean(z ** 2))), "pre_absmax": float(tf.reduce_max(tf.abs(z))),
+            "w_rms": float(tf.sqrt(tf.reduce_mean(l.kernel ** 2))),
+            "w_absmax": float(tf.reduce_max(tf.abs(l.kernel))),
+            "b_absmax": float(tf.reduce_max(tf.abs(l.bias))),
+            "act_clip_frac": (float(tf.reduce_mean(tf.cast(z >= model.act_qs[i].s, tf.float32)))
+                              if i < len(model.act_qs) and model.act_qs[i] is not None else None),
+        } for i, (l, z) in enumerate(zip(model.dense_layers, pre))]
     if args.save_calib and not diverged:
         _, pre = model(tf.constant(Xva[:8192]), return_hidden=True)
         arrs = {}
